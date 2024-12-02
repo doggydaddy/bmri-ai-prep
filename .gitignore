@@ -1,5 +1,7 @@
 .venv
 **/__pycache__
 testdata/
-eval_results/
+evaldata/
 04_segmentation/leaky_vnet/
+evalresults/**/*.nii
+evalresults/**/*.csv

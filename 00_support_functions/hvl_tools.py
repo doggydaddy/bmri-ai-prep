@@ -2,7 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
-import SimpleITK as sitk
+#import SimpleITK as sitk
 from ipywidgets import interact,fixed
 import ipywidgets as widgets
 import matplotlib.patches as patches

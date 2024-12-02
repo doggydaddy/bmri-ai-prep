@@ -11,6 +11,28 @@ from skimage.transform import resize as resize
 import os
 from transformers import SegformerImageProcessor, SegformerForSemanticSegmentation
 
+# general support functions for testing and evaluation
+# ----------------------------------------------------
+def find_files_matching_string(root_dir, match_string):
+    '''
+    find all files matching match_string in root_dir 
+
+    designed for BRIDS dataset directories in mind
+    '''
+    matching_files = []
+    # First level directories
+    for first_level_dir in os.listdir(root_dir):
+        first_level_path = os.path.join(root_dir, first_level_dir)
+        if os.path.isdir(first_level_path):
+            # Second level directories
+            for second_level_dir in os.listdir(first_level_path):
+                second_level_path = os.path.join(first_level_path, second_level_dir)
+                if os.path.isdir(second_level_path):
+                    # Check files in second level directory
+                    for file_name in os.listdir(second_level_path):
+                        if match_string in file_name:
+                            matching_files.append(os.path.join(second_level_path, file_name))
+    return matching_files
 
 # functions for perform motion-correction and coregistration 
 # ----------------------------------------------------------
@@ -52,6 +74,9 @@ def moco_nrdef(moving, output, ref="", be='0.005', le='0.05', logfile=""):
         return False
 
     mov_nt = subprocess.run(['3dinfo', '-nt', moving], stdout=subprocess.PIPE).stdout.decode('utf-8').strip()
+    if mov_nt == 'NO_DSET':
+        print('error! no dataset found! exiting ...')
+        return
     mov_nt = int(mov_nt)
 
     if mov_nt <= 1:
@@ -91,7 +116,7 @@ def moco_nrdef(moving, output, ref="", be='0.005', le='0.05', logfile=""):
                     '-res', 'tmpout'+"{:04d}".format(i)+'.nii']
         subprocess.run(command, check=True, stdout=stdo, stderr=stde)
 
-    tcat_cmd = "3dTcat tmpout*.nii -prefix " + str(output) + ".nii"
+    tcat_cmd = "3dTcat tmpout*.nii -prefix " + str(output)
     subprocess.call(tcat_cmd, stdout=stdo, stderr=stde, shell=True)
     subprocess.call(['rm tmp*.nii'], shell=True)
     if os.path.exists('tref.nii'):
@@ -398,7 +423,7 @@ def calc_ssim(input_dataset):
             ssim_tab[i, j] = ssim(reference_image, an_image)
     return ssim_tab
 
-def prepImgForMetricCalc(input_numpy_array, slice_index, volume_index):
+def prepImgForMetricCalc(input_numpy_array, slice_index, volume_index=-1):
     '''
     Support function to convert numpy array from MRI images to more resemble a
     natural image (picture) in computation aspects in preparation for
@@ -407,7 +432,10 @@ def prepImgForMetricCalc(input_numpy_array, slice_index, volume_index):
     Performs range checking, and numeric continuity, as well as expanding
     dimensions.
     '''
-    tmp = input_numpy_array[:,:,slice_index,volume_index]
+    if volume_index == -1:
+        tmp = input_numpy_array[:,:,slice_index]
+    else:
+        tmp = input_numpy_array[:,:,slice_index,volume_index]
     tmp = 255*tmp/(np.ptp(tmp)+1)
     tmp = np.ascontiguousarray(tmp, dtype=np.uint8)
     tmp = np.expand_dims(tmp, axis=-1)
@@ -424,6 +452,44 @@ def eval_moco_ssim(reference_dataset, moco_dataset):
     mov_ssim = np.mean(mov_moco_eval_params) 
     ssim_moco_metric = (mov_ssim-ref_ssim)/ref_ssim
     return ssim_moco_metric
+
+def eval_coreg_ssim(ref, moving_before, moving_after):
+    '''
+    Calculates the ssim metric for coregistration against reference dataset.
+    Currently only 3D volumes are supported.
+    '''
+
+    ref_nib = nib.load(ref)
+    moving_before_nib = nib.load(moving_before)
+    moving_after_nib = nib.load(moving_after)
+
+    ref_data = ref_nib.get_fdata()
+    moving_before_data = moving_before_nib.get_fdata()
+    moving_after_data = moving_after_nib.get_fdata()
+
+    print("DBG: reference data shape:", ref_data.shape)
+    print("DBG: moving data (before coreg) shape:", moving_before_data.shape)
+    print("DBG: moving data (after coreg) shape:", moving_after_data.shape)
+    if ref_data.shape != moving_before_data.shape:
+        print("Warning! reference and moving data shape is not the same!")
+        print("Resampling")
+        resampled_moving_before_data = resize(moving_before_data, ref_data.shape)     
+        moving_before_data = resampled_moving_before_data
+
+    nslices = ref_data.shape[2]
+    ssim_slices = np.zeros(nslices)
+    for i in range(nslices):
+        reference_image = prepImgForMetricCalc(ref_data, i, -1)
+        moving_before_image = prepImgForMetricCalc(moving_before_data, i, -1)
+        moving_after_image = prepImgForMetricCalc(moving_after_data, i, -1)
+
+        ssim_ref = ssim(reference_image, moving_before_image)
+        ssim_reg = ssim(reference_image, moving_after_image)
+
+        ssim_slices[i] = (ssim_reg-ssim_ref)/ssim_ref
+
+    return np.mean(ssim_slices)
+
 
 # general utility functions for segmentation
 # ------------------------------------------
